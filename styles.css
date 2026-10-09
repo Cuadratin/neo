@@ -951,7 +951,7 @@ body.night #outline-board { --card: #e2ddd1; --card-head: #ebe7dd; }
   font-size: calc(13px * var(--cz));
 }
 body.light .ob-card { box-shadow: 0 0 0 1px #d9d3c4, 0 3px 8px rgba(60,50,30,0.12); }
-.ob-cell:focus-visible .ob-card { box-shadow: 0 0 0 2px var(--accent), 0 5px 12px rgba(0,0,0,0.3); }
+.ob-cell:focus-visible .ob-card { box-shadow: 0 0 0 3px var(--red), 0 5px 12px rgba(0,0,0,0.3); }
 .ob-chapter { background: var(--card-head); }
 .ob-head { display: flex; align-items: baseline; gap: 7px; min-height: 0; }
 .ob-chapter .ob-head { align-items: flex-end; border-bottom: 1px solid #e3b4ae; padding-bottom: 2px; }
@@ -1984,8 +1984,10 @@ body.light #nav-pane.script .nav-item.sp-scene .n-num { color: #8f8a80; }
 .ob-held { margin-top: 6px; font-size: 11px; letter-spacing: 0.04em; color: var(--muted); }
 
 /* cards picked together (⌘-click, Shift-click, or a sweep across the board) */
-.ob-cell.ob-sel .ob-card { box-shadow: 0 0 0 2px var(--accent), 0 2px 10px rgba(0, 0, 0, 0.25); }
-.ob-lasso { position: fixed; z-index: 50; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 3px; pointer-events: none; }
+/* red, not the accent's gold: gold on a cream card can't be told from no
+   border at all (#351) */
+.ob-cell.ob-sel .ob-card { box-shadow: 0 0 0 3px var(--red), 0 2px 10px rgba(0, 0, 0, 0.25); }
+.ob-lasso { position: fixed; z-index: 50; border: 1px solid var(--red); background: color-mix(in srgb, var(--red) 10%, transparent); border-radius: 3px; pointer-events: none; }
 .ob-lassoing, .ob-lassoing * { user-select: none !important; -webkit-user-select: none !important; }
 
 /* a scene's card note on its empty first line, until the scene is written (#339) */
@@ -1999,6 +2001,12 @@ body.light #nav-pane.script .nav-item.sp-scene .n-num { color: #8f8a80; }
 /* the shelf's own size (#336), kept on this device */
 #shelves { zoom: var(--shelf-zoom, 1); }
 
-/* the note being worked on, plain to see among the others (#351) */
-.sticky.current { box-shadow: 0 0 0 2px var(--red); background: #33302a; }
-body.light .sticky.current { box-shadow: 0 0 0 2px var(--red); background: #fff9e8; }
+/* the open book's title beside the window's buttons (macOS, where the system's
+   own bar is hidden behind the page; elsewhere the system's bar shows it) */
+body.mac-bar #dragstrip {
+  padding-left: 84px; line-height: 28px; font-size: 12px; color: #6a6a6a;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 84px;
+  pointer-events: auto; user-select: none;
+}
+body.light.mac-bar #dragstrip { color: #8a857c; }
+body.full-screen #dragstrip, body.focus-mode #dragstrip { color: transparent; }

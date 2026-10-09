@@ -526,6 +526,17 @@ document.addEventListener('mousedown', (e) => {
   if (btn) btn.click();
 });
 
+// The open book's title up where the window's buttons are: the system's own
+// title bar on Windows and Linux (and the Window menu everywhere), and on
+// macOS, where that bar is hidden behind the page, the strip beside the buttons
+if (IS_MAC && !IS_POCKET) document.body.classList.add('mac-bar');
+function showWindowTitle() {
+  const title = book ? (book.title || t('Untitled')) : '';
+  document.title = title ? title + ' — NEO' : 'NEO';
+  const strip = IS_MAC && !IS_POCKET && document.querySelector('#dragstrip'); // the desktop's page only
+  if (strip) strip.textContent = title;
+}
+
 function toast(msg, ms = 4000) {
   const h = $('#hint');
   h.textContent = msg;
@@ -2490,6 +2501,7 @@ async function openBook(bookId) {
   if (gen !== openGeneration) return;
   tabPlaces = {}; // a fresh book starts with fresh places
   book = meta;
+  showWindowTitle();
   currentChapterId = null; // never carry a chapter reference across books
   undoStack = [];
   chapterHTML = html;
@@ -4790,6 +4802,7 @@ function showTitleStyle() {
 }
 $('#tp-title').addEventListener('input', () => {
   book.title = $('#tp-title').textContent.trim() || t('Untitled');
+  showWindowTitle();
   scheduleMetaSave();
 });
 $('#tp-subtitle').addEventListener('input', () => {
@@ -7021,7 +7034,6 @@ function renderStickies() {
       <div class="s-actions"><button class="s-go">${t('Go to')}</button><span class="s-sep">·</span><button class="s-done">${t('Resolve')}</button></div>`;
     const ta = el.querySelector('textarea');
     ta.value = s.text;
-    ta.addEventListener('focus', () => markCurrentSticky(s.id));
     ta.addEventListener('input', () => {
       s.text = ta.value;
       scheduleStickiesSave();
@@ -7128,16 +7140,8 @@ function focusSticky(sid) {
   $('#side-pane').classList.add('open');
   const el = document.querySelector(`.sticky[data-sid="${sid}"] textarea`);
   if (!el) return;
-  markCurrentSticky(sid);
   el.closest('.sticky').scrollIntoView({ block: 'nearest', behavior: scrollBehavior() });
   el.focus({ preventScroll: true });
-}
-// the note being worked on stands out in the pane (#351): the one whose
-// mark was just clicked in the text, or whose words are being edited
-function markCurrentSticky(sid) {
-  for (const s of document.querySelectorAll('.sticky.current')) if (s.dataset.sid !== sid) s.classList.remove('current');
-  const el = sid && document.querySelector(`.sticky[data-sid="${sid}"]`);
-  if (el) el.classList.add('current');
 }
 
 /* ================================================================== */
@@ -11304,6 +11308,7 @@ async function backToShelf() {
   flushAllSaves();
   tabPlaces = {};
   book = null;
+  showWindowTitle();
   currentChapterId = null;
   undoStack = [];
   $('#editor-view').hidden = true;
