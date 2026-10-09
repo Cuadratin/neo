@@ -2504,6 +2504,7 @@ async function openBook(bookId) {
   showWindowTitle();
   snapShown = null;
   snapCache = null;
+  sideCardsKey = '';
   currentChapterId = null; // never carry a chapter reference across books
   undoStack = [];
   chapterHTML = html;
@@ -6106,6 +6107,15 @@ function spTab(p, back, ghost) {
 // speech makes a parenthetical
 function scriptInput(body) {
   const p = caretBlock(body);
+  // the whole script cleared (⌘A, then Delete or ⌘X): the one line left
+  // starts over as action, the way a new script does, not as whatever the
+  // last line deleted was. Left as dialogue, "int." stayed dialogue and
+  // Return kept to the speech's rules (#359)
+  if (p && body.children.length === 1) {
+    const type = spType(p);
+    const text = p.textContent.trim();
+    if ((type === 'dialogue' || type === 'paren') || (type !== 'action' && type !== 'heading' && (!text || SP_HEAD_RE.test(text)))) spSetClass(p, 'action');
+  }
   if (p) {
     const type = spType(p);
     const text = p.textContent;
@@ -6648,8 +6658,14 @@ document.addEventListener('beforeinput', (e) => {
     cut.setEnd(r.endContainer, r.endOffset);
     cut.deleteContents();
   }
+  const upperType = spType(upper);
   for (let n = upper; n && n !== lower;) { const next = n.nextElementSibling; n.remove(); n = next; }
   if (!lower.textContent && !lower.querySelector('br')) lower.appendChild(document.createElement('br'));
+  // nothing of the lower line left: the line is the one the selection began
+  // on, and a script cleared whole (⌘A, Delete) starts over as action, as a
+  // new one does. Kept as the last line's dialogue, Return only changed the
+  // element and "int." never became a heading (#359)
+  if (!lower.textContent.trim()) spSetClass(lower, body.children.length === 1 ? 'action' : upperType);
   placeCaret(lower, 0);
   syncChapter(body, chId);
   breakRun++;
@@ -7041,6 +7057,7 @@ function renderStickies() {
       <div class="s-actions"><button class="s-go">${t('Go to')}</button><span class="s-sep">·</span><button class="s-done">${t('Resolve')}</button></div>`;
     const ta = el.querySelector('textarea');
     ta.value = s.text;
+    ta.addEventListener('focus', () => markCurrentSticky(s.id));
     ta.addEventListener('input', () => {
       s.text = ta.value;
       scheduleStickiesSave();
@@ -7143,10 +7160,19 @@ function resolveSticky(sid) {
   scheduleNavRefresh();
 }
 
+// the note being worked on stands out in the pane (#351): the one whose
+// mark was just clicked in the text, or whose words are being edited
+function markCurrentSticky(sid) {
+  for (const s of document.querySelectorAll('.sticky.current')) if (s.dataset.sid !== sid) s.classList.remove('current');
+  const el = sid && document.querySelector(`.sticky[data-sid="${sid}"]`);
+  if (el) el.classList.add('current');
+}
+
 function focusSticky(sid) {
   $('#side-pane').classList.add('open');
   const el = document.querySelector(`.sticky[data-sid="${sid}"] textarea`);
   if (!el) return;
+  markCurrentSticky(sid);
   el.closest('.sticky').scrollIntoView({ block: 'nearest', behavior: scrollBehavior() });
   el.focus({ preventScroll: true });
 }
@@ -7813,6 +7839,7 @@ function switchTab(name) {
       : { scroll: scroller.scrollTop };
   }
   currentTab = name;
+  queueSideCards();
   applyBright();
   $$('.tab').forEach((t) => {
     t.classList.toggle('active', t.dataset.tab === name);
@@ -8026,6 +8053,60 @@ function outlineLine(kind, chId, secId, index, label, text) {
     save();
     if (kind === 'section') syncGhosts(chId);
     renderNav();
+  });
+  // a list pasted (Word, Obsidian, a notes app): a line for each item, as if
+  // typed with Enter and Tab. On a chapter's line the top items are chapters
+  // and the indented ones their sections; on a section's, each is a section (#348)
+  txt.addEventListener('paste', (e) => {
+    const items = pastedOutline(e.clipboardData);
+    if (items.length < 2) {
+      e.preventDefault();
+      document.execCommand('insertText', false, (e.clipboardData.getData('text/plain') || '').replace(/\s+/g, ' '));
+      return;
+    }
+    e.preventDefault();
+    snapshotStructure('outline paste', { outlineFocus: here() });
+    book.sectionNotes = book.sectionNotes || {};
+    book.chapterNotes = book.chapterNotes || {};
+    document.execCommand('insertText', false, items[0].text);
+    save();
+    let focus = here();
+    const touched = new Set([chId]);
+    if (kind === 'section') {
+      const list = book.sectionNotes[chId] || (book.sectionNotes[chId] = []);
+      let at = list.findIndex((x) => x.id === secId) + 1;
+      for (const it of items.slice(1)) {
+        const sec = { id: newSectionId(), text: it.text };
+        list.splice(at++, 0, sec);
+        focus = { secId: sec.id };
+      }
+    } else {
+      let cur = chId; // the chapter the items go after, and their sections into
+      let secAt = 0; // under the line pasted on, ahead of the sections it already has
+      for (const it of items.slice(1)) {
+        if (it.level === 0) {
+          const next = 'ch-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
+          book.chapterOrder.splice(book.chapterOrder.indexOf(cur) + 1, 0, next);
+          cur = next;
+          chapterHTML[cur] = '<p><br></p>';
+          book.chapterNotes[cur] = it.text;
+          persistChapter(cur);
+          secAt = 0;
+          focus = { chId: cur };
+        } else {
+          const list = book.sectionNotes[cur] || (book.sectionNotes[cur] = []);
+          const sec = { id: newSectionId(), text: it.text };
+          list.splice(secAt++, 0, sec);
+          touched.add(cur);
+          focus = { secId: sec.id };
+        }
+      }
+    }
+    scheduleMetaSave();
+    renderChapters();
+    for (const c of touched) syncGhosts(c);
+    updateCounters();
+    renderOutline(focus);
   });
 
   // Enter at the very start of a line that has text makes the new line
@@ -8768,7 +8849,7 @@ function openCard(cell, { fresh = false } = {}) {
   text.addEventListener('paste', (e) => {
     e.preventDefault();
     const raw = e.clipboardData.getData('text/plain') || '';
-    const items = outlineLines(raw);
+    const items = pastedOutline(e.clipboardData);
     // a list (from Word, Obsidian, a notes app): one card per line (#348)
     if (items.length > 1) { pasteOutline(items); return; }
     document.execCommand('insertText', false, raw.replace(/\s+/g, ' '));
@@ -8986,17 +9067,63 @@ function cardKeys(e) {
 // A pasted list, one item a line: bullets (-, *, •), numbers (1. 2)) and
 // letters (a.) come off, blank lines go. A line indented more than the
 // list's least indented ones is a level down. (#348)
+// A list as plain text, one item a line. Its marks go: bullets (Word's
+// second and third levels arrive as "o" and "§" before a tab), numbers and
+// letters, Markdown's headings and checkboxes (Obsidian). An item indented
+// past the least indented, or under one of Word's deeper bullets, is a level
+// down.
 function outlineLines(raw) {
   const items = [];
   for (const line of String(raw).replace(/\r\n?/g, '\n').split('\n')) {
-    const m = /^([ \t]*)(?:[-*+•◦▪‣·–—]\s+|\d{1,3}[.)]\s+|[a-zA-Z][.)]\s+)?(.*)$/.exec(line);
-    const words = (m ? m[2] : line).replace(/\s+/g, ' ').trim();
+    const m = /^([ \t]*)(?:([-*+•◦▪‣·–—])\s+|([o§])\t+|\d{1,3}[.)]\s+|[a-zA-Z][.)]\s+|#{1,6}\s+)?(?:\[[ xX]\]\s+)?(.*)$/.exec(line);
+    const words = (m ? m[4] : line).replace(/\s+/g, ' ').trim();
     if (!words) continue;
-    items.push({ indent: (m ? m[1] : '').replace(/\t/g, '    ').length, text: words });
+    const deep = !!m && (!!m[3] || /^[◦▪]$/.test(m[2] || ''));
+    items.push({ indent: (m ? m[1] : '').replace(/\t/g, '    ').length + (deep ? 1000 : 0), text: words });
   }
+  return outlineLevels(items);
+}
+function outlineLevels(items) {
   const least = items.length ? Math.min(...items.map((x) => x.indent)) : 0;
   for (const x of items) x.level = x.indent > least ? 1 : 0;
   return items;
+}
+// The same list from the HTML a word processor or a web page puts on the
+// clipboard beside the text, where the levels are real: nested <ul>/<ol>, or
+// Word's own list paragraphs (mso-list … level2). Fewer than two items: none.
+function outlineFromHtml(html) {
+  if (!html || !/<li[\s>]|mso-list/i.test(html)) return [];
+  const tpl = document.createElement('template');
+  tpl.innerHTML = html;
+  const root = tpl.content;
+  const items = [];
+  const lis = [...root.querySelectorAll('li')];
+  if (lis.length) {
+    for (const li of lis) {
+      const copy = li.cloneNode(true);
+      copy.querySelectorAll('ul, ol').forEach((x) => x.remove());
+      const text = copy.textContent.replace(/\s+/g, ' ').trim();
+      if (!text) continue;
+      let depth = 0;
+      for (let a = li.parentElement; a; a = a.parentElement) if (a.tagName === 'UL' || a.tagName === 'OL') depth++;
+      items.push({ indent: depth, text });
+    }
+  } else {
+    for (const p of root.querySelectorAll('p')) {
+      const m = /mso-list:\s*\S+\s+level(\d+)/i.exec(p.getAttribute('style') || '');
+      const copy = p.cloneNode(true);
+      copy.querySelectorAll('[style*="mso-list:Ignore" i], [style*="mso-list: Ignore" i]').forEach((x) => x.remove());
+      const text = copy.textContent.replace(/\s+/g, ' ').trim();
+      if (!text) continue;
+      items.push({ indent: m ? +m[1] : 0, text });
+    }
+  }
+  return items.length > 1 ? outlineLevels(items) : [];
+}
+// what was pasted, as a list: the HTML's levels when it has them, else the text's
+function pastedOutline(data) {
+  const fromHtml = outlineFromHtml(data.getData('text/html'));
+  return fromHtml.length > 1 ? fromHtml : outlineLines(data.getData('text/plain') || '');
 }
 
 // The list's first line goes on the open card, and each line after it on a
@@ -10412,6 +10539,130 @@ function hideWalkNote() {
   walkEl = null;
   walkP = null;
 }
+
+// ---- the cards beside the page (#340) ----
+// While writing, the top of the right-hand pane holds the Outline's cards for
+// where the caret is: the chapter's card and its sections' (the one the caret
+// is in marked), or in a script the scene's. They're the same notes the
+// Outline shows, and they stay here after the gray ghost on the page has
+// been written over. Typed on here, they change there too.
+let sideCardsKey = '';
+let sideCardsQueued = false;
+function sideCardsBox() {
+  let box = $('#side-cards');
+  if (box) return box;
+  box = document.createElement('div');
+  box.id = 'side-cards';
+  $('#side-head').before(box);
+  return box;
+}
+// the section (by its note's id) holding p, ghost or written
+function sectionOf(body, p) {
+  const chId = body.closest('.chapter')?.dataset.id;
+  const notes = new Set(((book.sectionNotes || {})[chId] || []).map((s) => s.id));
+  const claimed = new Set();
+  let id = null;
+  for (const el of body.children) {
+    if (el.classList.contains('scene-break')) {
+      if (id) claimed.add(id);
+      id = null;
+      if (el === p) return null;
+      continue;
+    }
+    if (!id && el.dataset && notes.has(el.dataset.secId) && !claimed.has(el.dataset.secId)) id = el.dataset.secId;
+    if (el === p) return id;
+  }
+  return null;
+}
+function queueSideCards() {
+  if (sideCardsQueued) return;
+  sideCardsQueued = true;
+  requestAnimationFrame(() => { sideCardsQueued = false; sideCardsUpdate(); });
+}
+function sideCardsUpdate(force) {
+  const box = sideCardsBox();
+  if (!book || currentTab !== 'manuscript') { if (sideCardsKey) { box.innerHTML = ''; sideCardsKey = ''; } return; }
+  if (box.contains(document.activeElement)) return; // being typed on
+  const sel = window.getSelection();
+  let el = sel.rangeCount ? sel.anchorNode : null;
+  if (el && el.nodeType === Node.TEXT_NODE) el = el.parentElement;
+  const p = el && el.closest ? el.closest('.chapter-body > p') : null;
+  const body = p ? p.parentElement : null;
+  const chId = body ? body.closest('.chapter').dataset.id : currentChapterId;
+  let key = '';
+  let cards = [];
+  if (chId && isScript()) {
+    // the scene: its heading, at or above the caret
+    let h = p;
+    while (h && !h.classList.contains('sp-heading')) h = h.previousElementSibling;
+    if (h) {
+      // (a scene gets its id with its first note, here as on the Outline)
+      const sid = h.dataset.sceneId || '';
+      key = 'scene:' + (sid || [...body.querySelectorAll('p.sp-heading')].indexOf(h)) + ':' + h.textContent;
+      cards = [{ kind: 'scene', id: sid, head: h, label: h.textContent.trim() || t('Scene'), text: (book.sceneNotes || {})[sid] || '', current: false }];
+    }
+  } else if (chId && book.chapterOrder.includes(chId) && isStory(chId)) {
+    const secId = body ? sectionOf(body, p) : null;
+    const secs = (book.sectionNotes || {})[chId] || [];
+    key = 'ch:' + chId + ':' + (secId || '') + ':' + secs.length;
+    cards = [{ kind: 'chapter', id: chId, label: (book.chapterTitles || {})[chId] || chapterName(chId), text: (book.chapterNotes || {})[chId] || '', current: false },
+      ...secs.map((s, i) => ({ kind: 'section', id: s.id, chId, label: t('Section {letter}', { letter: secLetter(i) }), text: s.text || '', current: s.id === secId }))];
+  }
+  if (key === sideCardsKey && !force) return;
+  sideCardsKey = key;
+  box.innerHTML = '';
+  for (const c of cards) {
+    const card = document.createElement('div');
+    card.className = 'side-card side-card-' + c.kind + (c.current ? ' current' : '');
+    const head = document.createElement('div');
+    head.className = 'side-card-head';
+    head.textContent = c.label;
+    const ta = document.createElement('textarea');
+    ta.spellcheck = false;
+    ta.rows = 1;
+    ta.value = c.text;
+    ta.placeholder = c.kind === 'chapter' ? t('What happens in this chapter?') : c.kind === 'scene' ? t('What happens in this scene?') : t('What happens in this section?');
+    ta.setAttribute('aria-label', c.label);
+    const fit = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; };
+    ta.addEventListener('input', () => {
+      const val = ta.value.trim();
+      if (c.kind === 'chapter') book.chapterNotes[c.id] = val;
+      else if (c.kind === 'scene') {
+        book.sceneNotes = book.sceneNotes || {};
+        if (!c.id && val && c.head.isConnected) {
+          c.id = newSceneId();
+          c.head.dataset.sceneId = c.id;
+          syncChapter(spBodyOf(c.head), spChapterOf(c.head));
+        }
+        if (c.id) { if (val) book.sceneNotes[c.id] = val; else delete book.sceneNotes[c.id]; }
+      }
+      else { const s = (book.sectionNotes[c.chId] || []).find((x) => x.id === c.id); if (s) s.text = val; }
+      scheduleMetaSave();
+      fit();
+    });
+    ta.addEventListener('blur', () => {
+      if (c.kind === 'section') syncGhosts(c.chId);
+      if (c.kind === 'scene') spSchedule();
+      renderNav();
+    });
+    ta.addEventListener('keydown', (e) => {
+      // Esc (or Enter without Shift) goes back to the page
+      if (e.key === 'Escape' || (e.key === 'Enter' && !e.shiftKey && !e.isComposing)) {
+        e.preventDefault();
+        e.stopPropagation();
+        ta.blur();
+        focusPage();
+      }
+    });
+    card.append(head, ta);
+    box.appendChild(card);
+    requestAnimationFrame(fit);
+  }
+}
+document.addEventListener('selectionchange', queueSideCards);
+// the pane coming into view shows the cards as they are now (the Outline may
+// have changed them since)
+$('#side-hotzone').addEventListener('mouseenter', () => sideCardsUpdate(true));
 
 function walkNoteUpdate() {
   walkQueued = false;
@@ -11904,6 +12155,8 @@ async function backToShelf() {
   showWindowTitle();
   snapShown = null;
   snapCache = null;
+  sideCardsKey = '';
+  if ($('#side-cards')) $('#side-cards').innerHTML = '';
   currentChapterId = null;
   undoStack = [];
   $('#editor-view').hidden = true;
