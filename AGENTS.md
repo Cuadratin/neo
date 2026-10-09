@@ -79,6 +79,15 @@ Export → Paperback for KDP… (also on the shelf's right-click Export) writes 
 - Page 1 is the story's first page (the first `chapter` section, so a prologue). In the paperback that section is `.pg1` and each page's number is set on it after layout. The regular PDF stops counting on `@page front` pages and numbers its contents from the `data-p1` link; pages after page 1 that show no number (a part's title) are `.page.counted`.
 - `scripts/print.test.js` covers the margin bands, hyphenation, the page box and the cover's size. Pocket has no paperback export.
 
+## Snapshots
+
+⌘S (Ctrl+S; File → Take Snapshot) snapshots the whole book (SNAPSHOTS in `app.js`). NEO also takes one before the first change of each writing day (`maybeDailySnapshot`, from `scheduleChapterSave` and `snapshotStructure`, built from `savedHTML` so it holds the day's start). No timer, and nothing is taken when nothing changed.
+
+- One folder per snapshot, `book-…/snapshots/<UTC stamp>Z-<kind>-<chapters changed>-<words>-<rand>/`, holding only the chapters that changed since the last snapshot and, written last, `snapshot.json` (order, titles, kinds, a `textHash` of every chapter). Files are written once (`snapshot:list/read/write/remove` in `main.js`, the same four in Pocket's bridge). A chapter's text at a snapshot is in the newest snapshot at or before it holding the file (`snapHolder`).
+- Kinds: `k` ⌘S, kept until deleted; `d` start of a day and `r` just before a restore, which go after 30 days (`snapsToThin`). A snapshot that goes first copies its chapter files into the next one that lacks them, so later snapshots still read whole.
+- The Darlings tab's right-hand pane lists them (and stays open there); picking one shows the book as it was in `#snap-view`, read-only, words gone since marked with the CSS Highlight API (`wordsGone`). Restore This Chapter and Restore Whole Book take an `r` snapshot and a `snapshotStructure` first, so ⌘Z undoes them. A passage can be set aside as a darling from the right-click menu. Pocket takes snapshots but has no list yet.
+- The daily backup zip leaves `snapshots/` out. `scripts/snapshots.test.js` covers the names, the fingerprint, thinning, where a chapter's text is and the marks.
+
 ## Per device
 
 How NEO looks belongs to each device: `DEVICE_LOOK` in `app.js` (page theme, brightness, zoom, type size, typewriter, focus, counters, outline view, vim keys). Every library write also keeps them in this device's `localStorage`; every library read takes them back from there (`applyDeviceLook`). The library's copy is the last device's, which is what a device new to the library starts with. Zoom is per device and per view: the page per mode, the cards, and the shelf (`neo.shelfZoom`, ⌘+/− and pinch on the shelf), each in `localStorage`; the page moves in tenths. The desktop also keeps its page theme in `settings.json` for the window's color at launch, and `exportFolder` there, so save dialogs open where the last export went.
