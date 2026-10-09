@@ -3080,7 +3080,7 @@ function focusChapterStart(chId) {
 
 // The caret at the last character of a chapter, inside its last paragraph,
 // with the view kept where the writer is — not thrown to the chapter's top
-function focusChapterEnd(chId) {
+function focusChapterEnd(chId, reveal = true) {
   const nb = document.querySelector(`.chapter[data-id="${chId}"] .chapter-body`);
   if (!nb) return;
   if (!nb.isContentEditable) { showEntry(chId); return; }
@@ -3107,7 +3107,7 @@ function focusChapterEnd(chId) {
   s.addRange(nr);
   currentChapterId = chId;
   highlightNav();
-  revealCaret();
+  if (reveal) revealCaret();
 }
 
 // Backspace in an empty chapter deletes it:
@@ -3176,10 +3176,13 @@ function caretFromEmptyClick(e) {
   const chId = sec.dataset.id;
   e.preventDefault();
   if (e.clientY < box.top) { focusChapterStart(chId); return; }
-  if (e.clientY > box.bottom) { focusChapter(chId); return; }
+  // below the text: the caret at its end, and the page stays where it is
+  // (focusChapter's focus() scrolled up to the chapter's top, a page or two
+  // on a half-empty sheet, #354)
+  if (e.clientY > box.bottom) { focusChapterEnd(chId, false); updateCounters(); return; }
   const x = Math.min(Math.max(e.clientX, box.left + 2), box.right - 2);
   const r = document.caretRangeFromPoint(x, e.clientY);
-  if (!r || !body.contains(r.startContainer)) { focusChapter(chId); return; }
+  if (!r || !body.contains(r.startContainer)) { focusChapterEnd(chId, false); updateCounters(); return; }
   body.focus({ preventScroll: true });
   const s = window.getSelection();
   s.removeAllRanges();
@@ -4605,7 +4608,8 @@ const QUOTE_STYLES = {
   fr: { open: '«\u202f', close: '\u202f»' },             // narrow no-break spaces inside
   es: { open: '«', close: '»' },                          // RAE: « » first
   it: { open: '«', close: '»' },
-  de: { open: '„', close: '“' },
+  de: { open: '»', close: '«' },                          // novels: »…« (#353); a book in „…“ keeps it (bookQuotes)
+  'de-CH': { open: '«', close: '»' },                     // Swiss: «…»
   pl: { open: '„', close: '”' },
   ro: { open: '„', close: '”' },
   ru: { open: '«', close: '»' },
@@ -4642,11 +4646,13 @@ function bookQuotes(el) {
   const opens = (text) => {
     const n = (re) => (text.match(re) || []).length;
     const own = q.open.trim();
-    return { '»': n(/»(?=[\p{L}\p{N}])/gu), '«': own === '«' ? 0 : n(/«(?=[\p{L}\p{N}])/gu), own: n(new RegExp(own + '\\s?(?=[\\p{L}\\p{N}])', 'gu')) };
+    return { '»': own === '»' ? 0 : n(/»(?=[\p{L}\p{N}])/gu), '«': own === '«' ? 0 : n(/«(?=[\p{L}\p{N}])/gu), '„': own === '„' ? 0 : n(/„(?=[\p{L}\p{N}])/gu), own: n(new RegExp(own + '\\s?(?=[\\p{L}\\p{N}])', 'gu')) };
   };
   const body = el && el.closest ? el.closest('.chapter-body') : null;
   let c = opens(body ? body.textContent : '');
-  if (!c['»'] && !c['«'] && !c.own && book) c = opens(book.chapterOrder.map((id) => chapterHTML[id] || '').join(' '));
+  if (!c['»'] && !c['«'] && !c['„'] && !c.own && book) c = opens(book.chapterOrder.map((id) => chapterHTML[id] || '').join(' '));
+  // a German book already written in „…“ keeps its marks
+  if (c['„'] > c.own && c['„'] >= c['»'] && c['„'] >= c['«'] && writingLanguage().toLowerCase().startsWith('de')) return { open: '„', close: '“' };
   if (c['»'] > c.own && c['»'] >= c['«']) return { open: '»', close: writingLanguage().split('-')[0] === 'sv' ? '»' : '«' };
   if (c['«'] > c.own && c['«'] > c['»']) return { open: '«', close: '»' };
   return q;
@@ -7015,6 +7021,7 @@ function renderStickies() {
       <div class="s-actions"><button class="s-go">${t('Go to')}</button><span class="s-sep">·</span><button class="s-done">${t('Resolve')}</button></div>`;
     const ta = el.querySelector('textarea');
     ta.value = s.text;
+    ta.addEventListener('focus', () => markCurrentSticky(s.id));
     ta.addEventListener('input', () => {
       s.text = ta.value;
       scheduleStickiesSave();
@@ -7120,7 +7127,17 @@ function resolveSticky(sid) {
 function focusSticky(sid) {
   $('#side-pane').classList.add('open');
   const el = document.querySelector(`.sticky[data-sid="${sid}"] textarea`);
-  if (el) el.focus();
+  if (!el) return;
+  markCurrentSticky(sid);
+  el.closest('.sticky').scrollIntoView({ block: 'nearest', behavior: scrollBehavior() });
+  el.focus({ preventScroll: true });
+}
+// the note being worked on stands out in the pane (#351): the one whose
+// mark was just clicked in the text, or whose words are being edited
+function markCurrentSticky(sid) {
+  for (const s of document.querySelectorAll('.sticky.current')) if (s.dataset.sid !== sid) s.classList.remove('current');
+  const el = sid && document.querySelector(`.sticky[data-sid="${sid}"]`);
+  if (el) el.classList.add('current');
 }
 
 /* ================================================================== */

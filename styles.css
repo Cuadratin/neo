@@ -1998,3 +1998,7 @@ body.light #nav-pane.script .nav-item.sp-scene .n-num { color: #8f8a80; }
 
 /* the shelf's own size (#336), kept on this device */
 #shelves { zoom: var(--shelf-zoom, 1); }
+
+/* the note being worked on, plain to see among the others (#351) */
+.sticky.current { box-shadow: 0 0 0 2px var(--red); background: #33302a; }
+body.light .sticky.current { box-shadow: 0 0 0 2px var(--red); background: #fff9e8; }
